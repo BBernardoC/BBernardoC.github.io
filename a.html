@@ -1,0 +1,832 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width,initial-scale=1" />
+    <title>Normalizador Lógico — HTML/JS/CSS</title>
+    <script
+      src="https://cdn.jsdelivr.net/npm/mathjax@3/es5/tex-mml-chtml.js"
+      async
+    ></script>
+    <style>
+      :root {
+        --bg: #0f1724;
+        --card: #0b1220;
+        --muted: #9aa4b2;
+        --accent: #6366f1;
+        --danger: #ef4444;
+        --mono: ui-monospace, SFMono-Regular, Menlo, Monaco, "Roboto Mono",
+          "Segoe UI Mono", "Courier New", monospace;
+      }
+      html,
+      body {
+        height: 100%;
+        margin: 0;
+        font-family: Inter, system-ui, Arial;
+        background: linear-gradient(180deg, #071025 0%, var(--bg) 100%);
+        color: #e6eef6;
+      }
+      .wrap {
+        max-width: 1100px;
+        margin: 28px auto;
+        padding: 20px;
+      }
+      header h1 {
+        margin: 0 0 6px;
+        font-size: 20px;
+      }
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 420px;
+        gap: 18px;
+      }
+      .card {
+        background: var(--card);
+        border: 1px solid rgba(255, 255, 255, 0.03);
+        padding: 14px;
+        border-radius: 12px;
+        box-shadow: 0 6px 18px rgba(2, 6, 23, 0.6);
+      }
+      textarea {
+        width: 100%;
+        height: 160px;
+        background: #061022;
+        border: 1px solid rgba(255, 255, 255, 0.04);
+        color: #dbeafe;
+        padding: 10px;
+        border-radius: 8px;
+        font-family: var(--mono);
+        font-size: 14px;
+      }
+      .btn {
+        display: inline-block;
+        padding: 8px 12px;
+        border-radius: 10px;
+        background: var(--accent);
+        color: white;
+        border: none;
+        cursor: pointer;
+        margin-right: 8px;
+      }
+      .small {
+        font-size: 13px;
+        color: var(--muted);
+      }
+      .mathbox {
+        background: #041020;
+        padding: 12px;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.03);
+        min-height: 56px;
+      }
+      ol.steps {
+        padding-left: 18px;
+        margin: 0;
+      }
+      .clause {
+        background: #071427;
+        padding: 10px;
+        border-radius: 8px;
+        border: 1px solid rgba(255, 255, 255, 0.02);
+        margin-bottom: 8px;
+      }
+      .error {
+        color: var(--danger);
+        margin-top: 8px;
+      }
+      footer {
+        margin-top: 14px;
+        color: var(--muted);
+        font-size: 13px;
+      }
+      @media (max-width: 980px) {
+        .grid {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="wrap">
+      <header>
+        <h1>
+          Normalizador Lógico — HTML / CSS / JS (LaTeX → Prenex
+          CNF/DNF/Cláusulas/Horn)
+        </h1>
+        <div class="small">
+          Use conectivos LaTeX: <code>\\neg</code>, <code>\\land</code>,
+          <code>\\lor</code>, <code>\\to</code>, <code>\\leftrightarrow</code> e
+          quantificadores <code>\\forall</code>, <code>\\exists</code>.
+          Predicados iniciam com maiúscula; termos com minúscula.
+        </div>
+      </header>
+
+      <div class="grid" style="margin-top: 12px">
+        <div class="card">
+          <label class="small">Fórmula (LaTeX)</label>
+          <textarea id="input">
+\forall x. (\exists y. (P(x) \to Q(y))) \land R(x)</textarea
+          >
+
+          <div style="margin-top: 10px">
+            <button class="btn" id="run">Rodar</button>
+            <button class="btn" id="sample1" style="background: #374151">
+              Ex.: Quantificadores
+            </button>
+            <button class="btn" id="sample2" style="background: #374151">
+              Ex.: Bicondicional
+            </button>
+            <span style="margin-left: 8px" class="small"
+              >Clique para preencher exemplos.</span
+            >
+          </div>
+
+          <div style="margin-top: 12px">
+            <div class="small">Renderização MathJax</div>
+            <div class="mathbox" id="render">
+              $$\forall x. (\exists y. (P(x) \to Q(y))) \land R(x)$$
+            </div>
+          </div>
+
+          <div id="error" class="error" aria-live="polite"></div>
+        </div>
+
+        <div class="card">
+          <h3 style="margin: 0 0 8px">Transformações (passo a passo)</h3>
+          <div class="small" style="margin-bottom: 10px">
+            Cada passo é apresentado em LaTeX — MathJax renderiza
+            automaticamente.
+          </div>
+          <ol class="steps" id="steps"></ol>
+          <footer>
+            Protótipo didático — pode não cobrir todas as sintaxes. Para casos
+            muito complexos recomendo usar ferramentas formais (Z3, TPTP, etc.).
+          </footer>
+        </div>
+      </div>
+    </div>
+
+    <script>
+      // --------- Tokenizar & Parser ----------
+      const TT = {
+        FORALL: "FORALL",
+        EXISTS: "EXISTS",
+        NEG: "NEG",
+        AND: "AND",
+        OR: "OR",
+        IMP: "IMP",
+        IFF: "IFF",
+        LPAREN: "LPAREN",
+        RPAREN: "RPAREN",
+        DOT: "DOT",
+        COMMA: "COMMA",
+        PRED: "PRED",
+        ID: "ID",
+        EOF: "EOF",
+      };
+
+      function tokenize(input) {
+        const src = input.replace(/\s+/g, " ").replace(/[{}]/g, "").trim();
+        const tokens = [];
+        let i = 0;
+        const n = src.length;
+        const startsWith = (s) => src.slice(i, i + s.length) === s;
+        const isLetter = (ch) => /[A-Za-z]/.test(ch);
+        const isIdent = (ch) => /[A-Za-z0-9_]/.test(ch);
+        while (i < n) {
+          const ch = src[i];
+          if (ch === " ") {
+            i++;
+            continue;
+          }
+          if (startsWith("\\forall")) {
+            tokens.push({ type: TT.FORALL });
+            i += 7;
+            continue;
+          }
+          if (startsWith("\\exists")) {
+            tokens.push({ type: TT.EXISTS });
+            i += 7;
+            continue;
+          }
+          if (startsWith("\\neg")) {
+            tokens.push({ type: TT.NEG });
+            i += 4;
+            continue;
+          }
+          if (startsWith("\\land")) {
+            tokens.push({ type: TT.AND });
+            i += 5;
+            continue;
+          }
+          if (startsWith("\\lor")) {
+            tokens.push({ type: TT.OR });
+            i += 4;
+            continue;
+          }
+          if (startsWith("\\to")) {
+            tokens.push({ type: TT.IMP });
+            i += 3;
+            continue;
+          }
+          if (startsWith("\\leftrightarrow")) {
+            tokens.push({ type: TT.IFF });
+            i += 15;
+            continue;
+          }
+          if (ch === "(") {
+            tokens.push({ type: TT.LPAREN });
+            i++;
+            continue;
+          }
+          if (ch === ")") {
+            tokens.push({ type: TT.RPAREN });
+            i++;
+            continue;
+          }
+          if (ch === ".") {
+            tokens.push({ type: TT.DOT });
+            i++;
+            continue;
+          }
+          if (ch === ",") {
+            tokens.push({ type: TT.COMMA });
+            i++;
+            continue;
+          }
+          if (isLetter(ch)) {
+            let j = i + 1;
+            while (j < n && isIdent(src[j])) j++;
+            const ident = src.slice(i, j);
+            if (/^[A-Z]/.test(ident))
+              tokens.push({ type: TT.PRED, value: ident });
+            else tokens.push({ type: TT.ID, value: ident });
+            i = j;
+            continue;
+          }
+          throw new Error(`Caractere inesperado: '${ch}' em ${i}`);
+        }
+        tokens.push({ type: TT.EOF });
+        return tokens;
+      }
+
+      //  Formatos
+      const Pred = (n, a = []) => ({ type: "Pred", name: n, args: a });
+      const Not = (sub) => ({ type: "Not", sub });
+      const And = (l, r) => ({ type: "And", left: l, right: r });
+      const Or = (l, r) => ({ type: "Or", left: l, right: r });
+      const Imp = (l, r) => ({ type: "Imp", left: l, right: r });
+      const Iff = (l, r) => ({ type: "Iff", left: l, right: r });
+      const ForAll = (v, s) => ({ type: "ForAll", v, sub: s });
+      const Exists = (v, s) => ({ type: "Exists", v, sub: s });
+      const VarT = (n) => ({ t: "Var", name: n });
+      const FuncT = (n, a = []) => ({ t: "Func", name: n, args: a });
+
+      function parse(input) {
+        const tokens = tokenize(input);
+        let k = 0;
+        const peek = () => tokens[k];
+        const eat = (type) => {
+          const t = tokens[k];
+          if (t.type !== type)
+            throw new Error(`Esperado ${type} mas obteve ${t.type}`);
+          k++;
+          return t;
+        };
+        function parseTerm() {
+          const t = peek();
+          if (t.type !== TT.ID) throw new Error("Esperado variável/função");
+          const id = eat(TT.ID).value;
+          if (peek().type === TT.LPAREN) {
+            eat(TT.LPAREN);
+            const args = [];
+            if (peek().type !== TT.RPAREN) {
+              args.push(parseTerm());
+              while (peek().type === TT.COMMA) {
+                eat(TT.COMMA);
+                args.push(parseTerm());
+              }
+            }
+            eat(TT.RPAREN);
+            return FuncT(id, args);
+          }
+          return VarT(id);
+        }
+        function parseAtom() {
+          const t = peek();
+          if (t.type === TT.PRED) {
+            eat(TT.PRED);
+            if (peek().type === TT.LPAREN) {
+              eat(TT.LPAREN);
+              const args = [];
+              if (peek().type !== TT.RPAREN) {
+                args.push(parseTerm());
+                while (peek().type === TT.COMMA) {
+                  eat(TT.COMMA);
+                  args.push(parseTerm());
+                }
+              }
+              eat(TT.RPAREN);
+              return Pred(t.value, args);
+            }
+            return Pred(t.value, []);
+          }
+          throw new Error("Esperado predicado (ex: P, Q(x))");
+        }
+        function parseQN() {
+          const t = peek();
+          if (t.type === TT.FORALL || t.type === TT.EXISTS) {
+            const isFor = t.type === TT.FORALL;
+            eat(t.type);
+            const v = eat(TT.ID).value;
+            if (peek().type === TT.DOT) eat(TT.DOT);
+            const sub = parseImp();
+            return isFor ? ForAll(v, sub) : Exists(v, sub);
+          }
+          if (t.type === TT.NEG) {
+            eat(TT.NEG);
+            return Not(parseQN());
+          }
+          if (t.type === TT.LPAREN) {
+            eat(TT.LPAREN);
+            const f = parseImp();
+            eat(TT.RPAREN);
+            return f;
+          }
+          return parseAtom();
+        }
+        function parseAnd() {
+          let n = parseQN();
+          while (peek().type === TT.AND) {
+            eat(TT.AND);
+            n = And(n, parseQN());
+          }
+          return n;
+        }
+        function parseOr() {
+          let n = parseAnd();
+          while (peek().type === TT.OR) {
+            eat(TT.OR);
+            n = Or(n, parseAnd());
+          }
+          return n;
+        }
+        function parseImp() {
+          let n = parseOr();
+          while (peek().type === TT.IMP || peek().type === TT.IFF) {
+            const t = peek();
+            if (t.type === TT.IMP) {
+              eat(TT.IMP);
+              n = Imp(n, parseOr());
+            } else {
+              eat(TT.IFF);
+              n = Iff(n, parseOr());
+            }
+          }
+          return n;
+        }
+        const ast = parseImp();
+        if (peek().type !== TT.EOF)
+          throw new Error("Tokens residuais apos parse");
+        return ast;
+      }
+
+      // ---------- Utilities for terms/AST ----------
+      let gensym = 0;
+      function fresh(pref) {
+        return pref + ++gensym;
+      }
+      function cloneTerm(t) {
+        if (t.t === "Var") return VarT(t.name);
+        return FuncT(t.name, t.args.map(cloneTerm));
+      }
+      function replaceVarInTerm(t, v, repl) {
+        if (t.t === "Var") {
+          if (t.name === v) return cloneTerm(repl);
+          return VarT(t.name);
+        }
+        return FuncT(
+          t.name,
+          t.args.map((a) => replaceVarInTerm(a, v, repl))
+        );
+      }
+      function substituteVar(ast, v, repl) {
+        switch (ast.type) {
+          case "Pred":
+            return Pred(
+              ast.name,
+              ast.args.map((t) => replaceVarInTerm(t, v, repl))
+            );
+          case "Not":
+            return Not(substituteVar(ast.sub, v, repl));
+          case "And":
+            return And(
+              substituteVar(ast.left, v, repl),
+              substituteVar(ast.right, v, repl)
+            );
+          case "Or":
+            return Or(
+              substituteVar(ast.left, v, repl),
+              substituteVar(ast.right, v, repl)
+            );
+          case "Imp":
+            return Imp(
+              substituteVar(ast.left, v, repl),
+              substituteVar(ast.right, v, repl)
+            );
+          case "Iff":
+            return Iff(
+              substituteVar(ast.left, v, repl),
+              substituteVar(ast.right, v, repl)
+            );
+          case "ForAll":
+            if (ast.v === v) return ForAll(ast.v, ast.sub);
+            return ForAll(ast.v, substituteVar(ast.sub, v, repl));
+          case "Exists":
+            if (ast.v === v) return Exists(ast.v, ast.sub);
+            return Exists(ast.v, substituteVar(ast.sub, v, repl));
+          default:
+            return ast;
+        }
+      }
+
+      function renameBound(ast) {
+        switch (ast.type) {
+          case "ForAll": {
+            const fv = fresh("x");
+            const sub2 = substituteVar(ast.sub, ast.v, VarT(fv));
+            return ForAll(fv, renameBound(sub2));
+          }
+          case "Exists": {
+            const fv = fresh("x");
+            const sub2 = substituteVar(ast.sub, ast.v, VarT(fv));
+            return Exists(fv, renameBound(sub2));
+          }
+          case "Not":
+            return Not(renameBound(ast.sub));
+          case "And":
+            return And(renameBound(ast.left), renameBound(ast.right));
+          case "Or":
+            return Or(renameBound(ast.left), renameBound(ast.right));
+          case "Imp":
+            return Imp(renameBound(ast.left), renameBound(ast.right));
+          case "Iff":
+            return Iff(renameBound(ast.left), renameBound(ast.right));
+          default:
+            return ast;
+        }
+      }
+
+      // 1) eliminate -> and <->
+      function elimImpIff(ast) {
+        switch (ast.type) {
+          case "Imp":
+            return Or(Not(elimImpIff(ast.left)), elimImpIff(ast.right));
+          case "Iff": {
+            const a = elimImpIff(ast.left);
+            const b = elimImpIff(ast.right);
+            return And(Or(Not(a), b), Or(Not(b), a));
+          }
+          case "Not":
+            return Not(elimImpIff(ast.sub));
+          case "And":
+            return And(elimImpIff(ast.left), elimImpIff(ast.right));
+          case "Or":
+            return Or(elimImpIff(ast.left), elimImpIff(ast.right));
+          case "ForAll":
+            return ForAll(ast.v, elimImpIff(ast.sub));
+          case "Exists":
+            return Exists(ast.v, elimImpIff(ast.sub));
+          default:
+            return ast;
+        }
+      }
+
+      // 2) NNF
+      function nnf(ast) {
+        switch (ast.type) {
+          case "Not": {
+            const s = ast.sub;
+            switch (s.type) {
+              case "Not":
+                return nnf(s.sub);
+              case "And":
+                return Or(nnf(Not(s.left)), nnf(Not(s.right)));
+              case "Or":
+                return And(nnf(Not(s.left)), nnf(Not(s.right)));
+              case "ForAll":
+                return Exists(s.v, nnf(Not(s.sub)));
+              case "Exists":
+                return ForAll(s.v, nnf(Not(s.sub)));
+              default:
+                return Not(nnf(s));
+            }
+          }
+          case "And":
+            return And(nnf(ast.left), nnf(ast.right));
+          case "Or":
+            return Or(nnf(ast.left), nnf(ast.right));
+          case "ForAll":
+            return ForAll(ast.v, nnf(ast.sub));
+          case "Exists":
+            return Exists(ast.v, nnf(ast.sub));
+          default:
+            return ast;
+        }
+      }
+
+      // 3) Pull quantifiers to front (simple strategy)
+      function prenex(ast) {
+        function pull(a) {
+          switch (a.type) {
+            case "ForAll": {
+              const r = pull(a.sub);
+              return {
+                quants: [{ q: "A", v: a.v }, ...r.quants],
+                matrix: r.matrix,
+              };
+            }
+            case "Exists": {
+              const r = pull(a.sub);
+              return {
+                quants: [{ q: "E", v: a.v }, ...r.quants],
+                matrix: r.matrix,
+              };
+            }
+            case "And": {
+              const L = pull(a.left);
+              const R = pull(a.right);
+              return {
+                quants: [...L.quants, ...R.quants],
+                matrix: And(L.matrix, R.matrix),
+              };
+            }
+            case "Or": {
+              const L = pull(a.left);
+              const R = pull(a.right);
+              return {
+                quants: [...L.quants, ...R.quants],
+                matrix: Or(L.matrix, R.matrix),
+              };
+            }
+            default:
+              return { quants: [], matrix: a };
+          }
+        }
+        const r = pull(ast);
+        let res = r.matrix;
+        for (let i = r.quants.length - 1; i >= 0; i--) {
+          const q = r.quants[i];
+          res = q.q === "A" ? ForAll(q.v, res) : Exists(q.v, res);
+        }
+        return res;
+      }
+
+      // 4) Skolemize assuming prenex
+      function skolemize(prenexAst) {
+        const qlist = [];
+        let mat = prenexAst;
+        while (mat.type === "ForAll" || mat.type === "Exists") {
+          qlist.push({ q: mat.type === "ForAll" ? "A" : "E", v: mat.v });
+          mat = mat.sub;
+        }
+        let current = mat;
+        const universals = [];
+        for (const q of qlist) {
+          if (q.q === "A") universals.push(q.v);
+          else {
+            const skName = fresh("Sk");
+            const skTerm =
+              universals.length === 0
+                ? FuncT(skName, [])
+                : FuncT(
+                    skName,
+                    universals.map((u) => VarT(u))
+                  );
+            current = substituteVar(current, q.v, skTerm);
+          }
+        }
+        return current;
+      }
+
+      // CNF/DNF from NNF matrix (no quantifiers)
+      function isAtom(a) {
+        return a.type === "Pred";
+      }
+      function isLiteral(a) {
+        return isAtom(a) || (a.type === "Not" && isAtom(a.sub));
+      }
+      function litFromAst(a) {
+        if (a.type === "Pred") return { neg: false, atom: a };
+        if (a.type === "Not" && a.sub.type === "Pred")
+          return { neg: true, atom: a.sub };
+        throw new Error("Esperado literal");
+      }
+      function cnfMatrix(ast) {
+        function merge(A, B) {
+          const out = [];
+          for (const ca of A) for (const cb of B) out.push([...ca, ...cb]);
+          return out;
+        }
+        function toCNF(a) {
+          if (isLiteral(a)) return [[litFromAst(a)]];
+          if (a.type === "And") {
+            const L = toCNF(a.left);
+            const R = toCNF(a.right);
+            return [...L, ...R];
+          }
+          if (a.type === "Or") {
+            const L = toCNF(a.left);
+            const R = toCNF(a.right);
+            return merge(L, R);
+          }
+          throw new Error("Estrutura inesperada para CNF");
+        }
+        return toCNF(ast);
+      }
+      function dnfMatrix(ast) {
+        function merge(A, B) {
+          const out = [];
+          for (const a of A) for (const b of B) out.push([...a, ...b]);
+          return out;
+        }
+        function toDNF(a) {
+          if (isLiteral(a)) return [[litFromAst(a)]];
+          if (a.type === "Or") {
+            const L = toDNF(a.left);
+            const R = toDNF(a.right);
+            return [...L, ...R];
+          }
+          if (a.type === "And") {
+            const L = toDNF(a.left);
+            const R = toDNF(a.right);
+            return merge(L, R);
+          }
+          throw new Error("Estrutura inesperada para DNF");
+        }
+        return toDNF(ast);
+      }
+
+      function literalToLatex(l) {
+        return l.neg ? `\\neg ${predToLatex(l.atom)}` : predToLatex(l.atom);
+      }
+      function predToLatex(p) {
+        const args = p.args.length
+          ? `(${p.args.map(termToLatex).join(",")})`
+          : "";
+        return `${p.name}${args}`;
+      }
+      function termToLatex(t) {
+        if (t.t === "Var") return t.name;
+        const args = t.args.map(termToLatex).join(",");
+        return `${t.name}(${args})`;
+      }
+      function clausesToLatex(clauses) {
+        if (!clauses.length) return "\\top";
+        return clauses
+          .map(
+            (cl) => `\\left(${cl.map(literalToLatex).join(" \\lor ")}\\right)`
+          )
+          .join(" \\land ");
+      }
+      function dnfToLatex(terms) {
+        if (!terms.length) return "\\bot";
+        return terms
+          .map(
+            (t) => `\\left(${t.map(literalToLatex).join(" \\land ")}\\right)`
+          )
+          .join(" \\lor ");
+      }
+      function astToLatex(ast) {
+        switch (ast.type) {
+          case "Pred":
+            return predToLatex(ast);
+          case "Not":
+            return `\\neg(${astToLatex(ast.sub)})`;
+          case "And":
+            return `(${astToLatex(ast.left)} \\land ${astToLatex(ast.right)})`;
+          case "Or":
+            return `(${astToLatex(ast.left)} \\lor ${astToLatex(ast.right)})`;
+          case "Imp":
+            return `(${astToLatex(ast.left)} \\to ${astToLatex(ast.right)})`;
+          case "Iff":
+            return `(${astToLatex(ast.left)} \\leftrightarrow ${astToLatex(
+              ast.right
+            )})`;
+          case "ForAll":
+            return `\\forall ${ast.v}. ${astToLatex(ast.sub)}`;
+          case "Exists":
+            return `\\exists ${ast.v}. ${astToLatex(ast.sub)}`;
+          default:
+            return "?";
+        }
+      }
+
+      function prefixAndMatrix(ast) {
+        const qs = [];
+        let m = ast;
+        while (m.type === "ForAll" || m.type === "Exists") {
+          if (m.type === "ForAll") qs.push(`\\forall ${m.v}`);
+          else qs.push(`\\exists ${m.v}`);
+          m = m.sub;
+        }
+        return { prefix: qs.join(" "), matrix: m };
+      }
+
+      function isHorn(clauses) {
+        return clauses.every((cl) => cl.filter((l) => !l.neg).length <= 1);
+      }
+
+      // ---------- UI wiring ----------
+      const inputEl = document.getElementById("input");
+      const renderEl = document.getElementById("render");
+      const stepsEl = document.getElementById("steps");
+      const errEl = document.getElementById("error");
+
+      document.getElementById("sample1").addEventListener("click", () => {
+        inputEl.value =
+          "\\forall x. (R(x) \\to \\exists y. (P(x) \\land Q(y)))";
+        renderEl.innerHTML = `$$${inputEl.value}$$`;
+        MathJax.typesetPromise();
+      });
+      document.getElementById("sample2").addEventListener("click", () => {
+        inputEl.value = "(P \\leftrightarrow Q) \\lor \\neg R";
+        renderEl.innerHTML = `$$${inputEl.value}$$`;
+        MathJax.typesetPromise();
+      });
+
+      document.getElementById("run").addEventListener("click", () => {
+        errEl.textContent = "";
+        stepsEl.innerHTML = "";
+        gensym = 0;
+        try {
+          const original = parse(inputEl.value);
+          const s1 = renameBound(original);
+          const s2 = elimImpIff(s1);
+          const s3 = nnf(s2);
+          const s4 = prenex(s3);
+          const { prefix, matrix } = prefixAndMatrix(s4);
+          const cnfClausesMatrix = cnfMatrix(matrix);
+          const dnfTermsMatrix = dnfMatrix(matrix);
+          const skMat = skolemize(s4);
+          const skNNF = nnf(skMat);
+          const skCNF = cnfMatrix(skNNF);
+          const horn = isHorn(skCNF);
+
+          const newSteps = [
+            { title: "Entrada (parseada)", latex: astToLatex(original) },
+            { title: "Variáveis padronizadas", latex: astToLatex(s1) },
+            { title: "Eliminação de → e ↔", latex: astToLatex(s2) },
+            { title: "Forma Normal Negativa (NNF)", latex: astToLatex(s3) },
+            {
+              title: "Forma Prenex (prefixo + matriz)",
+              latex: `${prefix} :\\; ${astToLatex(matrix)}`,
+            },
+            {
+              title: "Matriz em CNF (Prenex CNF)",
+              latex: `\\; ${clausesToLatex(cnfClausesMatrix)}`,
+            },
+            {
+              title: "Matriz em DNF (Prenex DNF)",
+              latex: `\\; ${dnfToLatex(dnfTermsMatrix)}`,
+            },
+            {
+              title: "Forma Cláusal (após Skolemização)",
+              latex: clausesToLatex(skCNF),
+            },
+            {
+              title: "Cláusulas de Horn?",
+              latex: horn
+                ? "\\text{Sim — cada cláusula tem ≤ 1 literal positivo.}"
+                : "\\text{Não — existe cláusula com ≥ 2 literais positivos.}",
+            },
+          ];
+
+          // render steps
+          for (const s of newSteps) {
+            const li = document.createElement("li");
+            li.className = "clause";
+            const t = document.createElement("div");
+            t.className = "small";
+            t.textContent = s.title;
+            const m = document.createElement("div");
+            m.className = "mathbox";
+            m.innerHTML = `$$${s.latex}$$`;
+            li.appendChild(t);
+            li.appendChild(m);
+            stepsEl.appendChild(li);
+          }
+
+          // render input and typeset
+          renderEl.innerHTML = `$$${inputEl.value}$$`;
+          MathJax.typesetPromise();
+        } catch (e) {
+          errEl.textContent = e.message || String(e);
+        }
+      });
+
+      // initial typeset
+      MathJax.typesetPromise();
+    </script>
+  </body>
+</html>
